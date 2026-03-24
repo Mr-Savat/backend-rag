@@ -68,8 +68,8 @@ class Settings(BaseSettings):
     chunk_overlap: int = 200
     max_retrieved_chunks: int = 5
 
-        # Model settings
-    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"  # Free, local embeddings
+    # Model settings
+    embedding_model: str = "intfloat/e5-small-v2"
     chat_model: str = "gemini-2.5-flash"  # Keep Gemini for chat
 
     @property

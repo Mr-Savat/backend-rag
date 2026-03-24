@@ -14,7 +14,7 @@ from config import settings
 def get_embeddings() -> HuggingFaceEmbeddings:
     """
     Get HuggingFace embeddings instance (free, no API key required).
-    Uses sentence-transformers/all-MiniLM-L6-v2 model.
+    Uses intfloat/e5-small-v2 - small, efficient model.
     """
     return HuggingFaceEmbeddings(
         model_name=settings.embedding_model,
@@ -37,8 +37,7 @@ def get_vector_store(collection_name: str = "knowledge") -> PGVector:
     if not db_url or db_url == "":
         raise ValueError(
             "DATABASE_URL is not set. "
-            "Set it in backend/.env with your Supabase PostgreSQL connection string. "
-            "Find it in: Supabase Dashboard → Settings → Database → Connection string (URI)"
+            "Set it in backend/.env with your Supabase PostgreSQL connection string."
         )
 
     embeddings = get_embeddings()
@@ -71,7 +70,6 @@ def add_documents_to_vector_store(
     """
     vector_store = get_vector_store(collection_name)
 
-    # Prepare LangChain documents
     from langchain_core.documents import Document
 
     langchain_docs = []
@@ -86,9 +84,7 @@ def add_documents_to_vector_store(
             )
         )
 
-    # Add to vector store
     ids = vector_store.add_documents(langchain_docs)
-
     return len(ids)
 
 
@@ -100,24 +96,13 @@ def search_similar_documents(
 ) -> List[dict]:
     """
     Search for documents similar to the query.
-
-    Args:
-        query: User's question
-        k: Number of results to return (default from settings)
-        collection_name: Vector collection name
-        source_id: Optional filter by source ID
-
-    Returns:
-        List of dicts with 'content' and 'metadata' keys
     """
     vector_store = get_vector_store(collection_name)
 
-    # Build filter
     filter_dict = {}
     if source_id:
         filter_dict["source_id"] = source_id
 
-    # Search
     results = vector_store.similarity_search(
         query,
         k=k or settings.max_retrieved_chunks,
@@ -136,20 +121,10 @@ def search_similar_documents(
 def delete_vectors_by_source(source_id: str, collection_name: str = "knowledge") -> bool:
     """
     Delete all vectors associated with a knowledge source.
-
-    Args:
-        source_id: Knowledge source ID
-        collection_name: Vector collection name
-
-    Returns:
-        True if successful
     """
     try:
         vector_store = get_vector_store(collection_name)
-
-        # Delete by metadata filter
         vector_store.delete(filter={"source_id": source_id})
-
         return True
     except Exception as e:
         print(f"Error deleting vectors for source {source_id}: {e}")

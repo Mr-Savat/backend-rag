@@ -12,6 +12,9 @@ langchain-text-splitters==0.3.0
 langchain-google-genai==2.1.0
 langchain-postgres==0.0.12
 
+# LangChain HuggingFace (for embeddings)
+langchain-huggingface==0.1.0
+
 # Supabase / PostgreSQL
 supabase==2.10.0
 psycopg2-binary==2.9.9
@@ -33,7 +36,6 @@ pydantic==2.9.0
 pydantic-settings==2.5.0
 python-dotenv==1.0.1
 
-
-# HuggingFace embeddings (free alternative)
-langchain-huggingface>=0.1.0
-sentence-transformers>=3.0.0
+# Embeddings - CPU-only to reduce size
+torch --index-url https://download.pytorch.org/whl/cpu
+sentence-transformers==2.2.2
