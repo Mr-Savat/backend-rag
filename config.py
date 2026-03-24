@@ -69,7 +69,7 @@ class Settings(BaseSettings):
     max_retrieved_chunks: int = 5
 
     # Model settings
-    embedding_model: str = "intfloat/e5-small-v2"
+    embedding_model: str = "BAAI/bge-small-en-v1.5"  
     chat_model: str = "gemini-2.5-flash"  # Keep Gemini for chat
 
     @property

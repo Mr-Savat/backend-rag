@@ -1,26 +1,46 @@
 """
-Embedding generation and vector storage service using HuggingFace + pgvector.
+Embedding generation and vector storage service using FastEmbed + pgvector.
+FastEmbed is lightweight (no PyTorch dependencies) and perfect for serverless.
 """
 import os
 import json
 import uuid
 from typing import List
 
-from langchain_huggingface import HuggingFaceEmbeddings
+from fastembed import TextEmbedding
 from langchain_postgres import PGVector
 from config import settings
 
 
-def get_embeddings() -> HuggingFaceEmbeddings:
+# Global embedding model instance (lazy loaded)
+_embedding_model = None
+
+
+def get_embeddings():
     """
-    Get HuggingFace embeddings instance (free, no API key required).
-    Uses intfloat/e5-small-v2 - small, efficient model.
+    Get FastEmbed embeddings instance (lightweight, no PyTorch).
+    Model loads on first use, then stays in memory.
     """
-    return HuggingFaceEmbeddings(
-        model_name=settings.embedding_model,
-        model_kwargs={'device': 'cpu'},
-        encode_kwargs={'normalize_embeddings': True}
-    )
+    global _embedding_model
+    if _embedding_model is None:
+        # Use the smallest, fastest model
+        _embedding_model = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
+    return _embedding_model
+
+
+class FastEmbedWrapper:
+    """Wrapper to make FastEmbed compatible with LangChain's PGVector."""
+    
+    def __init__(self):
+        self.model = get_embeddings()
+    
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        """Embed a list of documents."""
+        return list(self.model.embed(texts))
+    
+    def embed_query(self, text: str) -> List[float]:
+        """Embed a single query."""
+        return list(self.model.embed([text]))[0]
 
 
 def get_vector_store(collection_name: str = "knowledge") -> PGVector:
@@ -40,7 +60,7 @@ def get_vector_store(collection_name: str = "knowledge") -> PGVector:
             "Set it in backend/.env with your Supabase PostgreSQL connection string."
         )
 
-    embeddings = get_embeddings()
+    embeddings = FastEmbedWrapper()
 
     vector_store = PGVector(
         embeddings=embeddings,
@@ -70,6 +90,7 @@ def add_documents_to_vector_store(
     """
     vector_store = get_vector_store(collection_name)
 
+    # Prepare LangChain documents
     from langchain_core.documents import Document
 
     langchain_docs = []
@@ -84,7 +105,9 @@ def add_documents_to_vector_store(
             )
         )
 
+    # Add to vector store
     ids = vector_store.add_documents(langchain_docs)
+
     return len(ids)
 
 
@@ -96,13 +119,24 @@ def search_similar_documents(
 ) -> List[dict]:
     """
     Search for documents similar to the query.
+
+    Args:
+        query: User's question
+        k: Number of results to return (default from settings)
+        collection_name: Vector collection name
+        source_id: Optional filter by source ID
+
+    Returns:
+        List of dicts with 'content' and 'metadata' keys
     """
     vector_store = get_vector_store(collection_name)
 
+    # Build filter
     filter_dict = {}
     if source_id:
         filter_dict["source_id"] = source_id
 
+    # Search
     results = vector_store.similarity_search(
         query,
         k=k or settings.max_retrieved_chunks,
@@ -121,6 +155,13 @@ def search_similar_documents(
 def delete_vectors_by_source(source_id: str, collection_name: str = "knowledge") -> bool:
     """
     Delete all vectors associated with a knowledge source.
+
+    Args:
+        source_id: Knowledge source ID
+        collection_name: Vector collection name
+
+    Returns:
+        True if successful
     """
     try:
         vector_store = get_vector_store(collection_name)
