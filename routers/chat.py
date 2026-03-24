@@ -1,7 +1,7 @@
 """
 Chat router - handles RAG chat conversations.
 """
-import uuid  # ✅ Added import
+import uuid 
 from fastapi import APIRouter, HTTPException
 from datetime import datetime
 from database import get_supabase
@@ -20,7 +20,7 @@ router = APIRouter(prefix="/api", tags=["chat"])
 async def create_conversation(data: ConversationCreate):
     """Create a new conversation."""
     supabase = get_supabase()
-    conv_id = str(uuid.uuid4())  # ✅ Now uuid is imported
+    conv_id = str(uuid.uuid4())
 
     # Insert the record
     supabase.table("conversations").insert({
