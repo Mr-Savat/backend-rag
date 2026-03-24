@@ -69,7 +69,7 @@ class Settings(BaseSettings):
     max_retrieved_chunks: int = 5
 
     # Model settings
-    embedding_model: str = "text-embedding-ada-002"
+    embedding_model: str = "models/embedding-001"
     chat_model: str = "gemini-2.0-flash"
 
     @property
