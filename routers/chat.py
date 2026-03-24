@@ -1,6 +1,7 @@
 """
 Chat router - handles RAG chat conversations.
 """
+import uuid  # ✅ Added import
 from fastapi import APIRouter, HTTPException
 from datetime import datetime
 from database import get_supabase
@@ -19,11 +20,11 @@ router = APIRouter(prefix="/api", tags=["chat"])
 async def create_conversation(data: ConversationCreate):
     """Create a new conversation."""
     supabase = get_supabase()
-    conv_id = str(uuid.uuid4())  # Add this import at top: import uuid
+    conv_id = str(uuid.uuid4())  # ✅ Now uuid is imported
 
     # Insert the record
     supabase.table("conversations").insert({
-        "id": conv_id,  # Add id
+        "id": conv_id,
         "title": data.title,
     }).execute()
 
@@ -49,7 +50,7 @@ async def list_conversations(user_id: str = None):
     """List all conversations."""
     supabase = get_supabase()
 
-    query = supabase.table("conversations").select("*, messages(count)").order("updated_at", desc=True)
+    query = supabase.table("conversations").select("*, messages(count)").order("updated_at", desc=True)  # ✅ Correct
 
     if user_id:
         query = query.eq("user_id", user_id)
@@ -82,8 +83,8 @@ async def get_conversation(conversation_id: str):
         raise HTTPException(status_code=404, detail="Conversation not found")
     conv_data = conv_result.data[0]
 
-    # Get messages
-    msg_result = supabase.table("messages").select("*").eq("conversation_id", conversation_id).order("created_at", asc=True).execute()
+    # Get messages - ✅ Fixed order syntax
+    msg_result = supabase.table("messages").select("*").eq("conversation_id", conversation_id).order("created_at", desc=False).execute()
 
     return {
         "conversation": conv_data,
@@ -118,7 +119,7 @@ async def send_message(data: ChatMessageRequest):
     5. Return AI response
     """
     supabase = get_supabase()
-    import uuid
+    # ✅ Removed import uuid from here (now at top)
 
     # Create conversation if not provided
     conversation_id = data.conversation_id
@@ -154,8 +155,8 @@ async def send_message(data: ChatMessageRequest):
     if not user_msg_result.data:
         raise HTTPException(status_code=500, detail="Failed to save message")
 
-    # Get conversation history for context
-    history_result = supabase.table("messages").select("*").eq("conversation_id", conversation_id).order("created_at", asc=True).execute()
+    # Get conversation history for context - ✅ Fixed order syntax
+    history_result = supabase.table("messages").select("*").eq("conversation_id", conversation_id).order("created_at", desc=False).execute()
     conversation_history = [
         {"role": msg["role"], "content": msg["content"]}
         for msg in history_result.data[:-1]  # Exclude current message
