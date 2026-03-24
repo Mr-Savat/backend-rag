@@ -9,11 +9,11 @@ python-multipart==0.0.12
 langchain==0.3.0
 langchain-community==0.3.0
 langchain-text-splitters==0.3.0
-langchain-google-genai==2.0.0
+langchain-google-genai==2.1.0
 langchain-postgres==0.0.12
 
 # Google AI
-google-generativeai>=0.7.0,<0.8.0   # fixed to match langchain-google-genai requirements
+google-generativeai>=0.8.0 
 
 # Supabase / PostgreSQL
 supabase==2.10.0
