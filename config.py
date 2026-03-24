@@ -69,8 +69,8 @@ class Settings(BaseSettings):
     max_retrieved_chunks: int = 5
 
     # Model settings
-    embedding_model: str = "models/embedding-001"
-    chat_model: str = "gemini-2.0-flash"
+    embedding_model: str = "text-embedding-005"
+    chat_model: str = "gemini-2.5-flash" 
 
     @property
     def cors_origin_list(self) -> List[str]:
