@@ -38,4 +38,4 @@ python-dotenv==1.0.1
 
 # Embeddings - CPU-only to reduce size
 torch --index-url https://download.pytorch.org/whl/cpu
-sentence-transformers==2.2.2
+sentence-transformers>=2.6.0
