@@ -35,7 +35,6 @@ async def list_data_sources():
 
     return {"sources": sources, "total": len(sources)}
 
-
 @router.post("/sources")
 async def add_data_source(
     background_tasks: BackgroundTasks,
@@ -52,19 +51,23 @@ async def add_data_source(
     supabase = get_supabase()
     source_id = str(uuid.uuid4())
 
-    # Create data source record
-    source_result = supabase.table("data_sources").insert({
+    # Insert the record
+    supabase.table("data_sources").insert({
         "id": source_id,
         "url": data.url,
         "title": data.title or data.url,
         "status": "syncing",
         "document_count": 0,
-    }).select().single().execute()
+    }).execute()
+
+    # Fetch the created record
+    source_result = supabase.table("data_sources").select('*').eq('id', source_id).execute()
+    source_data = source_result.data[0] if source_result.data else None
 
     # Schedule background crawling
     background_tasks.add_task(process_url_source, source_id, data.url)
 
-    return source_result.data
+    return source_data
 
 
 @router.post("/sources/{source_id}/sync")
@@ -75,9 +78,10 @@ async def sync_data_source(
     """Force re-sync a data source."""
     supabase = get_supabase()
 
-    source = supabase.table("data_sources").select("*").eq("id", source_id).single().execute()
-    if source.data is None:
+    source_result = supabase.table("data_sources").select("*").eq("id", source_id).execute()
+    if not source_result.data:
         raise HTTPException(status_code=404, detail="Data source not found")
+    source = source_result.data[0]
 
     # Update status to syncing
     supabase.table("data_sources").update({

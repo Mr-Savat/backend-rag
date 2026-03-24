@@ -19,19 +19,27 @@ router = APIRouter(prefix="/api", tags=["chat"])
 async def create_conversation(data: ConversationCreate):
     """Create a new conversation."""
     supabase = get_supabase()
+    conv_id = str(uuid.uuid4())  # Add this import at top: import uuid
 
-    result = supabase.table("conversations").insert({
+    # Insert the record
+    supabase.table("conversations").insert({
+        "id": conv_id,  # Add id
         "title": data.title,
-    }).select().single().execute()
+    }).execute()
 
-    if result.data is None:
+    # Fetch the created record
+    result = supabase.table("conversations").select('*').eq('id', conv_id).execute()
+    
+    if not result.data:
         raise HTTPException(status_code=500, detail="Failed to create conversation")
+    
+    conv_data = result.data[0]
 
     return ConversationResponse(
-        id=result.data["id"],
-        title=result.data["title"],
-        created_at=result.data["created_at"],
-        updated_at=result.data["updated_at"],
+        id=conv_data["id"],
+        title=conv_data["title"],
+        created_at=conv_data["created_at"],
+        updated_at=conv_data["updated_at"],
         message_count=0,
     )
 
@@ -69,15 +77,16 @@ async def get_conversation(conversation_id: str):
     supabase = get_supabase()
 
     # Get conversation
-    conv_result = supabase.table("conversations").select("*").eq("id", conversation_id).single().execute()
-    if conv_result.data is None:
+    conv_result = supabase.table("conversations").select("*").eq("id", conversation_id).execute()
+    if not conv_result.data:
         raise HTTPException(status_code=404, detail="Conversation not found")
+    conv_data = conv_result.data[0]
 
     # Get messages
     msg_result = supabase.table("messages").select("*").eq("conversation_id", conversation_id).order("created_at", asc=True).execute()
 
     return {
-        "conversation": conv_result.data,
+        "conversation": conv_data,
         "messages": msg_result.data,
     }
 
@@ -90,7 +99,7 @@ async def delete_conversation(conversation_id: str):
     # Messages are deleted automatically via ON DELETE CASCADE
     result = supabase.table("conversations").delete().eq("id", conversation_id).execute()
 
-    if result.data is None:
+    if not result.data:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
     return {"message": "Conversation deleted"}
@@ -109,31 +118,40 @@ async def send_message(data: ChatMessageRequest):
     5. Return AI response
     """
     supabase = get_supabase()
+    import uuid
 
     # Create conversation if not provided
     conversation_id = data.conversation_id
     if not conversation_id:
-        conv_result = supabase.table("conversations").insert({
+        conv_id = str(uuid.uuid4())
+        supabase.table("conversations").insert({
+            "id": conv_id,
             "title": data.message[:50],
-        }).select().single().execute()
-        conversation_id = conv_result.data["id"]
+        }).execute()
+        conversation_id = conv_id
     else:
         # Update conversation title if it's the first message
-        conv = supabase.table("conversations").select("messages(count)").eq("id", conversation_id).single().execute()
-        msg_count = conv.data.get("messages", [{}])[0].get("count", 0) if conv.data.get("messages") else 0
-        if msg_count == 0:
-            supabase.table("conversations").update({
-                "title": data.message[:50],
-            }).eq("id", conversation_id).execute()
+        conv_result = supabase.table("conversations").select("*, messages(count)").eq("id", conversation_id).execute()
+        if conv_result.data:
+            conv_data = conv_result.data[0]
+            msg_count = conv_data.get("messages", [{}])[0].get("count", 0) if conv_data.get("messages") else 0
+            if msg_count == 0:
+                supabase.table("conversations").update({
+                    "title": data.message[:50],
+                }).eq("id", conversation_id).execute()
 
     # Save user message
-    user_msg = supabase.table("messages").insert({
+    msg_id = str(uuid.uuid4())
+    supabase.table("messages").insert({
+        "id": msg_id,
         "conversation_id": conversation_id,
         "role": "user",
         "content": data.message,
-    }).select().single().execute()
+    }).execute()
 
-    if user_msg.data is None:
+    # Fetch the saved user message
+    user_msg_result = supabase.table("messages").select('*').eq('id', msg_id).execute()
+    if not user_msg_result.data:
         raise HTTPException(status_code=500, detail="Failed to save message")
 
     # Get conversation history for context
@@ -159,19 +177,25 @@ async def send_message(data: ChatMessageRequest):
             ai_content = f"I'm currently unable to process your request. Error: {str(e2)}"
 
     # Save AI response
-    ai_msg = supabase.table("messages").insert({
+    ai_msg_id = str(uuid.uuid4())
+    supabase.table("messages").insert({
+        "id": ai_msg_id,
         "conversation_id": conversation_id,
         "role": "assistant",
         "content": ai_content,
-    }).select().single().execute()
+    }).execute()
 
-    if ai_msg.data is None:
+    # Fetch the saved AI response
+    ai_msg_result = supabase.table("messages").select('*').eq('id', ai_msg_id).execute()
+    if not ai_msg_result.data:
         raise HTTPException(status_code=500, detail="Failed to save AI response")
+    
+    ai_msg_data = ai_msg_result.data[0]
 
     return ChatMessageResponse(
-        message_id=ai_msg.data["id"],
+        message_id=ai_msg_data["id"],
         conversation_id=conversation_id,
         role="assistant",
         content=ai_content,
-        created_at=ai_msg.data["created_at"],
+        created_at=ai_msg_data["created_at"],
     )

@@ -56,12 +56,12 @@ async def get_knowledge_source(source_id: str):
     """Get a single knowledge source."""
     supabase = get_supabase()
 
-    result = supabase.table("knowledge_sources").select("*").eq("id", source_id).single().execute()
-
-    if result.data is None:
+    result = supabase.table("knowledge_sources").select("*").eq("id", source_id).execute()
+    
+    if not result.data:
         raise HTTPException(status_code=404, detail="Knowledge source not found")
-
-    s = result.data
+    
+    s = result.data[0]
     return KnowledgeSourceResponse(
         id=s["id"],
         title=s["title"],
@@ -109,7 +109,7 @@ async def upload_knowledge_file(
     file_url = supabase.storage.from_("knowledge-files").get_public_url(storage_path)
 
     # Create knowledge source record
-    source_result = supabase.table("knowledge_sources").insert({
+    supabase.table("knowledge_sources").insert({
         "id": source_id,
         "title": title or file.filename,
         "type": type,
@@ -117,12 +117,16 @@ async def upload_knowledge_file(
         "file_path": storage_path,
         "file_size": f"{len(file_content) / 1024:.1f} KB",
         "document_count": 0,
-    }).select().single().execute()
+    }).execute()
+
+    # Fetch the created record
+    source_result = supabase.table("knowledge_sources").select('*').eq('id', source_id).execute()
+    source_data = source_result.data[0] if source_result.data else None
 
     # Schedule background processing
     background_tasks.add_task(process_uploaded_file, source_id, file_content, file_extension)
 
-    return source_result.data
+    return source_data
 
 
 @router.post("/knowledge/add-text")
@@ -145,14 +149,18 @@ async def add_text_knowledge(
         raise HTTPException(status_code=400, detail="Content is required for text/faq type")
 
     # Create knowledge source record
-    source_result = supabase.table("knowledge_sources").insert({
+    supabase.table("knowledge_sources").insert({
         "id": source_id,
         "title": data.title,
         "type": data.type.value,
         "status": "processing",
         "document_count": 0,
         "metadata": {"content_length": len(data.content)},
-    }).select().single().execute()
+    }).execute()
+
+    # Fetch the created record
+    source_result = supabase.table("knowledge_sources").select('*').eq('id', source_id).execute()
+    source_data = source_result.data[0] if source_result.data else None
 
     # Schedule background processing
     background_tasks.add_task(
@@ -162,7 +170,7 @@ async def add_text_knowledge(
         data.type.value,
     )
 
-    return source_result.data
+    return source_data
 
 
 @router.delete("/knowledge/{source_id}")
@@ -171,17 +179,20 @@ async def delete_knowledge_source(source_id: str):
     supabase = get_supabase()
 
     # Get source info for storage deletion
-    source = supabase.table("knowledge_sources").select("file_path").eq("id", source_id).single().execute()
-    if source.data is None:
+    source_result = supabase.table("knowledge_sources").select("file_path").eq("id", source_id).execute()
+    
+    if not source_result.data:
         raise HTTPException(status_code=404, detail="Knowledge source not found")
+    
+    source = source_result.data[0]
 
     # Delete from vector store
     delete_vectors_by_source(source_id)
 
     # Delete file from storage
-    if source.data.get("file_path"):
+    if source.get("file_path"):
         try:
-            supabase.storage.from_("knowledge-files").remove([source.data["file_path"]])
+            supabase.storage.from_("knowledge-files").remove([source["file_path"]])
         except Exception:
             pass  # File might not exist
 
