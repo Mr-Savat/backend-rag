@@ -32,3 +32,8 @@ markdownify==0.13.1
 pydantic==2.9.0
 pydantic-settings==2.5.0
 python-dotenv==1.0.1
+
+
+# HuggingFace embeddings (free alternative)
+langchain-huggingface>=0.1.0
+sentence-transformers>=3.0.0

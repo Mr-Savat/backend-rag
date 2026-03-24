@@ -1,29 +1,25 @@
 """
-Embedding generation and vector storage service using Google AI + pgvector.
+Embedding generation and vector storage service using HuggingFace + pgvector.
 """
 import os
 import json
 import uuid
 from typing import List
 
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_postgres import PGVector
 from config import settings
 
 
-def get_embeddings() -> GoogleGenerativeAIEmbeddings:
-    if settings.google_api_key == "your_google_api_key_here":
-        raise ValueError(
-            "GOOGLE_API_KEY is not set. "
-            "Please set it in backend/.env with your Google AI API key. "
-            "Get one at: https://aistudio.google.com/apikey"
-        )
-
-    return GoogleGenerativeAIEmbeddings(
-        model=settings.embedding_model,
-        google_api_key=settings.google_api_key,
-        client_options={"api_endpoint": "generativelanguage.googleapis.com"},
-        transport="rest",
+def get_embeddings() -> HuggingFaceEmbeddings:
+    """
+    Get HuggingFace embeddings instance (free, no API key required).
+    Uses sentence-transformers/all-MiniLM-L6-v2 model.
+    """
+    return HuggingFaceEmbeddings(
+        model_name=settings.embedding_model,
+        model_kwargs={'device': 'cpu'},
+        encode_kwargs={'normalize_embeddings': True}
     )
 
 
@@ -98,7 +94,7 @@ def add_documents_to_vector_store(
 
 def search_similar_documents(
     query: str,
-    k: int = None,  # Change from top_k to k to match the import in rag.py
+    k: int = None,
     collection_name: str = "knowledge",
     source_id: str = None,
 ) -> List[dict]:
@@ -124,7 +120,7 @@ def search_similar_documents(
     # Search
     results = vector_store.similarity_search(
         query,
-        k=k or settings.max_retrieved_chunks,  # Use k parameter
+        k=k or settings.max_retrieved_chunks,
         filter=filter_dict if filter_dict else None,
     )
 
