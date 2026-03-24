@@ -7,7 +7,7 @@ import json
 import uuid
 from typing import List
 
-from fastembed import TextEmbedding
+from fastembed.embedding import TextEmbedding  # ✅ Fixed import
 from langchain_postgres import PGVector
 from config import settings
 
