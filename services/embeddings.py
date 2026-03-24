@@ -12,10 +12,6 @@ from config import settings
 
 
 def get_embeddings() -> GoogleGenerativeAIEmbeddings:
-    """
-    Get Google AI embeddings instance.
-    Uses text-embedding-004 model.
-    """
     if settings.google_api_key == "your_google_api_key_here":
         raise ValueError(
             "GOOGLE_API_KEY is not set. "
@@ -26,6 +22,8 @@ def get_embeddings() -> GoogleGenerativeAIEmbeddings:
     return GoogleGenerativeAIEmbeddings(
         model=settings.embedding_model,
         google_api_key=settings.google_api_key,
+        client_options={"api_endpoint": "generativelanguage.googleapis.com"},
+        transport="rest",
     )
 
 
