@@ -50,7 +50,6 @@ async def create_conversation(
         message_count=0,
     )
 
-
 @router.get("/conversations")
 async def list_conversations(
     user_id: str = Depends(get_current_user_id)  # Add this
@@ -76,7 +75,6 @@ async def list_conversations(
         ))
 
     return {"conversations": conversations, "total": len(conversations)}
-
 
 @router.get("/conversations/{conversation_id}")
 async def get_conversation(
