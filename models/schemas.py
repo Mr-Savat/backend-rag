@@ -1,9 +1,10 @@
 """
 Pydantic models for API request/response schemas.
 """
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, EmailStr
 from typing import Optional, List
 from enum import Enum
+from datetime import datetime
 
 
 # --- Enums ---
@@ -32,6 +33,39 @@ class DataSourceStatus(str, Enum):
     DISCONNECTED = "disconnected"
     SYNCING = "syncing"
     ERROR = "error"
+
+
+# --- Authentication Models ---
+
+class AuthLoginRequest(BaseModel):
+    """User login request."""
+    email: EmailStr = Field(..., description="User email address")
+    password: str = Field(..., min_length=6, description="User password")
+
+
+class AuthSignupRequest(BaseModel):
+    """User signup request."""
+    email: EmailStr = Field(..., description="User email address")
+    password: str = Field(..., min_length=6, description="User password")
+    name: str = Field(..., min_length=1, max_length=100, description="User full name")
+
+
+class AuthResponse(BaseModel):
+    """Authentication response."""
+    access_token: str
+    refresh_token: Optional[str] = None
+    token_type: str = "bearer"
+    user: "UserResponse"
+
+
+class UserResponse(BaseModel):
+    """User information."""
+    id: str
+    email: str
+    name: Optional[str] = None
+    role: str = "user"
+    created_at: datetime
+    updated_at: datetime
 
 
 # --- Chat Models ---
@@ -82,6 +116,7 @@ class KnowledgeSourceResponse(BaseModel):
     title: str
     type: str
     status: str
+    user_id: Optional[str] = None  # ✅ Added user_id
     file_path: Optional[str] = None
     file_size: Optional[str] = None
     document_count: int
@@ -109,6 +144,7 @@ class DataSourceResponse(BaseModel):
     url: str
     title: str
     status: str
+    user_id: Optional[str] = None  # ✅ Added user_id
     last_sync: Optional[str] = None
     document_count: int
     created_at: str
@@ -132,3 +168,7 @@ class HealthResponse(BaseModel):
     status: str
     version: str
     services: dict
+
+
+# --- Update forward references ---
+AuthResponse.model_rebuild()

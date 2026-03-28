@@ -3,7 +3,7 @@ Knowledge router - handles knowledge source upload, processing, and management.
 """
 import os
 import uuid
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, BackgroundTasks
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, BackgroundTasks, Depends
 from database import get_supabase
 from models.schemas import (
     KnowledgeSourceCreate,
@@ -13,16 +13,23 @@ from models.schemas import (
 )
 from services.chunking import split_text, split_documents
 from services.embeddings import add_documents_to_vector_store, delete_vectors_by_source
+from dependencies.auth import get_current_user_id
 
 router = APIRouter(prefix="/api", tags=["knowledge"])
 
 
 @router.get("/knowledge", response_model=KnowledgeSourceListResponse)
-async def list_knowledge_sources(search: str = None, type: str = None, status: str = None):
-    """List all knowledge sources with optional filtering."""
+async def list_knowledge_sources(
+    search: str = None,
+    type: str = None,
+    status: str = None,
+    user_id: str = Depends(get_current_user_id)
+):
+    """List all knowledge sources for current user with optional filtering."""
     supabase = get_supabase()
 
-    query = supabase.table("knowledge_sources").select("*").order("created_at", desc=True)
+    query = supabase.table("knowledge_sources").select(
+        "*").eq("user_id", user_id).order("created_at", desc=True)
 
     if search:
         query = query.ilike("title", f"%{search}%")
@@ -52,15 +59,20 @@ async def list_knowledge_sources(search: str = None, type: str = None, status: s
 
 
 @router.get("/knowledge/{source_id}", response_model=KnowledgeSourceResponse)
-async def get_knowledge_source(source_id: str):
-    """Get a single knowledge source."""
+async def get_knowledge_source(
+    source_id: str,
+    user_id: str = Depends(get_current_user_id)
+):
+    """Get a single knowledge source (must belong to current user)."""
     supabase = get_supabase()
 
-    result = supabase.table("knowledge_sources").select("*").eq("id", source_id).execute()
-    
+    result = supabase.table("knowledge_sources").select(
+        "*").eq("id", source_id).eq("user_id", user_id).execute()
+
     if not result.data:
-        raise HTTPException(status_code=404, detail="Knowledge source not found")
-    
+        raise HTTPException(
+            status_code=404, detail="Knowledge source not found")
+
     s = result.data[0]
     return KnowledgeSourceResponse(
         id=s["id"],
@@ -81,6 +93,7 @@ async def upload_knowledge_file(
     file: UploadFile = File(...),
     title: str = Form(...),
     type: str = Form(default="document"),
+    user_id: str = Depends(get_current_user_id),
 ):
     """
     Upload a file to Supabase Storage and process it for RAG.
@@ -96,19 +109,19 @@ async def upload_knowledge_file(
 
     # Upload file to Supabase Storage
     file_content = await file.read()
-    file_extension = os.path.splitext(file.filename)[1] if file.filename else ""
+    file_extension = os.path.splitext(
+        file.filename)[1] if file.filename else ""
     storage_path = f"{source_id}{file_extension}"
 
     try:
-        storage_result = supabase.storage.from_("knowledge-files").upload(storage_path, file_content, {"content-type": file.content_type})
+        storage_result = supabase.storage.from_(
+            "knowledge-files").upload(storage_path, file_content, {"content-type": file.content_type})
     except Exception as e:
         if "already exists" not in str(e):
-            raise HTTPException(status_code=500, detail=f"Storage upload failed: {e}")
+            raise HTTPException(
+                status_code=500, detail=f"Storage upload failed: {e}")
 
-    # Get public URL
-    file_url = supabase.storage.from_("knowledge-files").get_public_url(storage_path)
-
-    # Create knowledge source record
+    # Create knowledge source record with user_id
     supabase.table("knowledge_sources").insert({
         "id": source_id,
         "title": title or file.filename,
@@ -117,14 +130,17 @@ async def upload_knowledge_file(
         "file_path": storage_path,
         "file_size": f"{len(file_content) / 1024:.1f} KB",
         "document_count": 0,
+        "user_id": user_id,  # ✅ Added user_id
     }).execute()
 
     # Fetch the created record
-    source_result = supabase.table("knowledge_sources").select('*').eq('id', source_id).execute()
+    source_result = supabase.table("knowledge_sources").select(
+        '*').eq('id', source_id).execute()
     source_data = source_result.data[0] if source_result.data else None
 
     # Schedule background processing
-    background_tasks.add_task(process_uploaded_file, source_id, file_content, file_extension)
+    background_tasks.add_task(process_uploaded_file,
+                              source_id, file_content, file_extension)
 
     return source_data
 
@@ -133,6 +149,7 @@ async def upload_knowledge_file(
 async def add_text_knowledge(
     background_tasks: BackgroundTasks,
     data: KnowledgeSourceCreate,
+    user_id: str = Depends(get_current_user_id),  
 ):
     """
     Add text content directly as a knowledge source.
@@ -146,20 +163,23 @@ async def add_text_knowledge(
     source_id = str(uuid.uuid4())
 
     if not data.content:
-        raise HTTPException(status_code=400, detail="Content is required for text/faq type")
+        raise HTTPException(
+            status_code=400, detail="Content is required for text/faq type")
 
-    # Create knowledge source record
+    # Create knowledge source record with user_id
     supabase.table("knowledge_sources").insert({
         "id": source_id,
         "title": data.title,
         "type": data.type.value,
         "status": "processing",
         "document_count": 0,
+        "user_id": user_id,  # ✅ Added user_id
         "metadata": {"content_length": len(data.content)},
     }).execute()
 
     # Fetch the created record
-    source_result = supabase.table("knowledge_sources").select('*').eq('id', source_id).execute()
+    source_result = supabase.table("knowledge_sources").select(
+        '*').eq('id', source_id).execute()
     source_data = source_result.data[0] if source_result.data else None
 
     # Schedule background processing
@@ -174,16 +194,21 @@ async def add_text_knowledge(
 
 
 @router.delete("/knowledge/{source_id}")
-async def delete_knowledge_source(source_id: str):
-    """Delete a knowledge source and its vectors."""
+async def delete_knowledge_source(
+    source_id: str,
+    user_id: str = Depends(get_current_user_id)
+):
+    """Delete a knowledge source and its vectors (must belong to current user)."""
     supabase = get_supabase()
 
-    # Get source info for storage deletion
-    source_result = supabase.table("knowledge_sources").select("file_path").eq("id", source_id).execute()
-    
+    # Get source info for storage deletion - verify ownership
+    source_result = supabase.table("knowledge_sources").select(
+        "file_path").eq("id", source_id).eq("user_id", user_id).execute()
+
     if not source_result.data:
-        raise HTTPException(status_code=404, detail="Knowledge source not found")
-    
+        raise HTTPException(
+            status_code=404, detail="Knowledge source not found")
+
     source = source_result.data[0]
 
     # Delete from vector store
@@ -192,12 +217,13 @@ async def delete_knowledge_source(source_id: str):
     # Delete file from storage
     if source.get("file_path"):
         try:
-            supabase.storage.from_("knowledge-files").remove([source["file_path"]])
+            supabase.storage.from_(
+                "knowledge-files").remove([source["file_path"]])
         except Exception:
             pass  # File might not exist
 
     # Delete from database
-    supabase.table("knowledge_sources").delete().eq("id", source_id).execute()
+    supabase.table("knowledge_sources").delete().eq("id", source_id).eq("user_id", user_id).execute()
 
     return {"message": "Knowledge source deleted"}
 
@@ -263,7 +289,8 @@ def process_text_content(source_id: str, content: str, source_type: str):
         else:
             # Regular text chunking
             chunks = split_text(content)
-            documents = [{"content": chunk, "metadata": {}} for chunk in chunks]
+            documents = [{"content": chunk, "metadata": {}}
+                         for chunk in chunks]
 
         # Store in vector database
         chunks_added = add_documents_to_vector_store(documents, source_id)
@@ -274,7 +301,8 @@ def process_text_content(source_id: str, content: str, source_type: str):
             "document_count": chunks_added,
         }).eq("id", source_id).execute()
 
-        print(f"Processed text source {source_id}: {chunks_added} chunks created")
+        print(
+            f"Processed text source {source_id}: {chunks_added} chunks created")
 
     except Exception as e:
         print(f"Error processing text source {source_id}: {e}")

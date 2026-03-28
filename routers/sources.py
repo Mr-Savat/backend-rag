@@ -2,22 +2,25 @@
 Data sources router - handles external URL management and crawling.
 """
 import uuid
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
 from database import get_supabase
 from models.schemas import DataSourceCreate, DataSourceResponse
 from services.crawler import crawl_url
 from services.chunking import split_text
-from services.embeddings import add_documents_to_vector_store
+from services.embeddings import add_documents_to_vector_store, delete_vectors_by_source
+from dependencies.auth import get_current_user_id
 
 router = APIRouter(prefix="/api", tags=["sources"])
 
 
 @router.get("/sources")
-async def list_data_sources():
-    """List all data sources (external URLs)."""
+async def list_data_sources(
+    user_id: str = Depends(get_current_user_id)
+):
+    """List all data sources (external URLs) for current user."""
     supabase = get_supabase()
 
-    result = supabase.table("data_sources").select("*").order("created_at", desc=True).execute()
+    result = supabase.table("data_sources").select("*").eq("user_id", user_id).order("created_at", desc=True).execute()
 
     sources = [
         DataSourceResponse(
@@ -35,10 +38,12 @@ async def list_data_sources():
 
     return {"sources": sources, "total": len(sources)}
 
+
 @router.post("/sources")
 async def add_data_source(
     background_tasks: BackgroundTasks,
     data: DataSourceCreate,
+    user_id: str = Depends(get_current_user_id),
 ):
     """
     Add a URL data source and crawl it.
@@ -51,13 +56,14 @@ async def add_data_source(
     supabase = get_supabase()
     source_id = str(uuid.uuid4())
 
-    # Insert the record
+    # Insert the record with user_id
     supabase.table("data_sources").insert({
         "id": source_id,
         "url": data.url,
         "title": data.title or data.url,
         "status": "syncing",
         "document_count": 0,
+        "user_id": user_id,  # ✅ Added user_id
     }).execute()
 
     # Fetch the created record
@@ -65,7 +71,7 @@ async def add_data_source(
     source_data = source_result.data[0] if source_result.data else None
 
     # Schedule background crawling
-    background_tasks.add_task(process_url_source, source_id, data.url)
+    background_tasks.add_task(process_url_source, source_id, data.url, user_id)
 
     return source_data
 
@@ -74,13 +80,17 @@ async def add_data_source(
 async def sync_data_source(
     source_id: str,
     background_tasks: BackgroundTasks,
+    user_id: str = Depends(get_current_user_id),
 ):
-    """Force re-sync a data source."""
+    """Force re-sync a data source (must belong to current user)."""
     supabase = get_supabase()
 
-    source_result = supabase.table("data_sources").select("*").eq("id", source_id).execute()
+    # Get the source - verify ownership
+    source_result = supabase.table("data_sources").select("*").eq("id", source_id).eq("user_id", user_id).execute()
+    
     if not source_result.data:
         raise HTTPException(status_code=404, detail="Data source not found")
+    
     source = source_result.data[0]
 
     # Update status to syncing
@@ -89,34 +99,37 @@ async def sync_data_source(
     }).eq("id", source_id).execute()
 
     # Schedule background crawling
-    background_tasks.add_task(process_url_source, source_id, source.data["url"])
+    background_tasks.add_task(process_url_source, source_id, source["url"], user_id)
 
     return {"message": "Sync started", "source_id": source_id}
 
 
 @router.delete("/sources/{source_id}")
-async def delete_data_source(source_id: str):
-    """Delete a data source."""
+async def delete_data_source(
+    source_id: str,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Delete a data source (must belong to current user)."""
     supabase = get_supabase()
 
+    # Verify ownership
+    check_result = supabase.table("data_sources").select("id").eq("id", source_id).eq("user_id", user_id).execute()
+    if not check_result.data:
+        raise HTTPException(status_code=404, detail="Data source not found")
+
     # Delete vectors associated with this source
-    from services.embeddings import delete_vectors_by_source
     delete_vectors_by_source(source_id, collection_name="knowledge")
 
     # Delete from database
-    result = supabase.table("data_sources").delete().eq("id", source_id).execute()
-
-    if result.data is None:
-        raise HTTPException(status_code=404, detail="Data source not found")
+    supabase.table("data_sources").delete().eq("id", source_id).eq("user_id", user_id).execute()
 
     return {"message": "Data source deleted"}
 
 
 # --- Background Processing ---
 
-async def process_url_source(source_id: str, url: str):
+async def process_url_source(source_id: str, url: str, user_id: str):
     """Crawl a URL and process its content for RAG."""
-    import asyncio
     from database import get_supabase
 
     supabase = get_supabase()
@@ -128,15 +141,13 @@ async def process_url_source(source_id: str, url: str):
         if crawl_result["error"]:
             supabase.table("data_sources").update({
                 "status": "error",
-                "metadata": {"error": crawl_result["error"]},
-            }).eq("id", source_id).execute()
+            }).eq("id", source_id).eq("user_id", user_id).execute()
             return
 
         if not crawl_result["content"] or crawl_result["word_count"] < 10:
             supabase.table("data_sources").update({
                 "status": "error",
-                "metadata": {"error": "Insufficient content extracted"},
-            }).eq("id", source_id).execute()
+            }).eq("id", source_id).eq("user_id", user_id).execute()
             return
 
         # Chunk the content
@@ -149,6 +160,8 @@ async def process_url_source(source_id: str, url: str):
                 "type": "url",
                 "url": url,
                 "title": crawl_result["title"],
+                "source_id": source_id,
+                "user_id": user_id,  # ✅ Added user_id to metadata
             },
         } for chunk in chunks]
 
@@ -161,7 +174,7 @@ async def process_url_source(source_id: str, url: str):
             "last_sync": datetime.now(timezone.utc).isoformat(),
             "document_count": chunks_added,
             "title": crawl_result["title"],
-        }).eq("id", source_id).execute()
+        }).eq("id", source_id).eq("user_id", user_id).execute()
 
         print(f"Processed URL source {source_id}: {chunks_added} chunks from {crawl_result['title']}")
 
@@ -169,5 +182,4 @@ async def process_url_source(source_id: str, url: str):
         print(f"Error processing URL source {source_id}: {e}")
         supabase.table("data_sources").update({
             "status": "error",
-            "metadata": {"error": str(e)},
-        }).eq("id", source_id).execute()
+        }).eq("id", source_id).eq("user_id", user_id).execute()

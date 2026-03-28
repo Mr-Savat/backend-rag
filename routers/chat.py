@@ -2,7 +2,7 @@
 Chat router - handles RAG chat conversations.
 """
 import uuid 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from datetime import datetime
 from database import get_supabase
 from models.schemas import (
@@ -12,20 +12,25 @@ from models.schemas import (
     ConversationResponse,
 )
 from services.rag import generate_rag_response, generate_simple_response
+from dependencies.auth import get_current_user_id
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
 
 @router.post("/conversations", response_model=ConversationResponse)
-async def create_conversation(data: ConversationCreate):
-    """Create a new conversation."""
+async def create_conversation(
+    data: ConversationCreate,
+    user_id: str = Depends(get_current_user_id)
+):
+    """Create a new conversation for the current user."""
     supabase = get_supabase()
     conv_id = str(uuid.uuid4())
 
-    # Insert the record
+    # Insert the record with user_id
     supabase.table("conversations").insert({
         "id": conv_id,
         "title": data.title,
+        "user_id": user_id,  # ✅ Added user_id
     }).execute()
 
     # Fetch the created record
@@ -39,6 +44,7 @@ async def create_conversation(data: ConversationCreate):
     return ConversationResponse(
         id=conv_data["id"],
         title=conv_data["title"],
+        user_id=conv_data.get("user_id"),
         created_at=conv_data["created_at"],
         updated_at=conv_data["updated_at"],
         message_count=0,
@@ -46,14 +52,14 @@ async def create_conversation(data: ConversationCreate):
 
 
 @router.get("/conversations")
-async def list_conversations(user_id: str = None):
-    """List all conversations."""
+async def list_conversations(
+    user_id: str = Depends(get_current_user_id)  # Add this
+):
+    """List all conversations for current user"""
     supabase = get_supabase()
 
-    query = supabase.table("conversations").select("*, messages(count)").order("updated_at", desc=True)  # ✅ Correct
-
-    if user_id:
-        query = query.eq("user_id", user_id)
+    # Filter by user_id
+    query = supabase.table("conversations").select("*, messages(count)").eq("user_id", user_id).order("updated_at", desc=True)
 
     result = query.execute()
 
@@ -73,17 +79,20 @@ async def list_conversations(user_id: str = None):
 
 
 @router.get("/conversations/{conversation_id}")
-async def get_conversation(conversation_id: str):
-    """Get a conversation with all messages."""
+async def get_conversation(
+    conversation_id: str,
+    user_id: str = Depends(get_current_user_id)
+):
+    """Get a conversation with all messages (must belong to current user)."""
     supabase = get_supabase()
 
-    # Get conversation
-    conv_result = supabase.table("conversations").select("*").eq("id", conversation_id).execute()
+    # Get conversation - verify ownership
+    conv_result = supabase.table("conversations").select("*").eq("id", conversation_id).eq("user_id", user_id).execute()
     if not conv_result.data:
         raise HTTPException(status_code=404, detail="Conversation not found")
     conv_data = conv_result.data[0]
 
-    # Get messages - ✅ Fixed order syntax
+    # Get messages
     msg_result = supabase.table("messages").select("*").eq("conversation_id", conversation_id).order("created_at", desc=False).execute()
 
     return {
@@ -93,21 +102,29 @@ async def get_conversation(conversation_id: str):
 
 
 @router.delete("/conversations/{conversation_id}")
-async def delete_conversation(conversation_id: str):
-    """Delete a conversation and its messages."""
+async def delete_conversation(
+    conversation_id: str,
+    user_id: str = Depends(get_current_user_id)
+):
+    """Delete a conversation and its messages (must belong to current user)."""
     supabase = get_supabase()
 
-    # Messages are deleted automatically via ON DELETE CASCADE
-    result = supabase.table("conversations").delete().eq("id", conversation_id).execute()
-
-    if not result.data:
+    # Verify ownership before deletion
+    check_result = supabase.table("conversations").select("id").eq("id", conversation_id).eq("user_id", user_id).execute()
+    if not check_result.data:
         raise HTTPException(status_code=404, detail="Conversation not found")
+
+    # Delete conversation (messages are deleted automatically via ON DELETE CASCADE)
+    result = supabase.table("conversations").delete().eq("id", conversation_id).execute()
 
     return {"message": "Conversation deleted"}
 
 
 @router.post("/chat", response_model=ChatMessageResponse)
-async def send_message(data: ChatMessageRequest):
+async def send_message(
+    data: ChatMessageRequest,
+    user_id: str = Depends(get_current_user_id)
+):
     """
     Send a message and get AI response using RAG.
 
@@ -119,7 +136,6 @@ async def send_message(data: ChatMessageRequest):
     5. Return AI response
     """
     supabase = get_supabase()
-    # ✅ Removed import uuid from here (now at top)
 
     # Create conversation if not provided
     conversation_id = data.conversation_id
@@ -128,9 +144,15 @@ async def send_message(data: ChatMessageRequest):
         supabase.table("conversations").insert({
             "id": conv_id,
             "title": data.message[:50],
+            "user_id": user_id,  # ✅ Added user_id
         }).execute()
         conversation_id = conv_id
     else:
+        # Verify conversation belongs to user
+        conv_check = supabase.table("conversations").select("id").eq("id", conversation_id).eq("user_id", user_id).execute()
+        if not conv_check.data:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
         # Update conversation title if it's the first message
         conv_result = supabase.table("conversations").select("*, messages(count)").eq("id", conversation_id).execute()
         if conv_result.data:
@@ -141,11 +163,12 @@ async def send_message(data: ChatMessageRequest):
                     "title": data.message[:50],
                 }).eq("id", conversation_id).execute()
 
-    # Save user message
+    # Save user message with user_id
     msg_id = str(uuid.uuid4())
     supabase.table("messages").insert({
         "id": msg_id,
         "conversation_id": conversation_id,
+        "user_id": user_id,  # ✅ Added user_id
         "role": "user",
         "content": data.message,
     }).execute()
@@ -155,7 +178,7 @@ async def send_message(data: ChatMessageRequest):
     if not user_msg_result.data:
         raise HTTPException(status_code=500, detail="Failed to save message")
 
-    # Get conversation history for context - ✅ Fixed order syntax
+    # Get conversation history for context - only messages from this user's conversation
     history_result = supabase.table("messages").select("*").eq("conversation_id", conversation_id).order("created_at", desc=False).execute()
     conversation_history = [
         {"role": msg["role"], "content": msg["content"]}
@@ -177,11 +200,12 @@ async def send_message(data: ChatMessageRequest):
         except Exception as e2:
             ai_content = f"I'm currently unable to process your request. Error: {str(e2)}"
 
-    # Save AI response
+    # Save AI response with user_id
     ai_msg_id = str(uuid.uuid4())
     supabase.table("messages").insert({
         "id": ai_msg_id,
         "conversation_id": conversation_id,
+        "user_id": user_id,  # ✅ Added user_id
         "role": "assistant",
         "content": ai_content,
     }).execute()
