@@ -39,3 +39,6 @@ fastembed==0.2.0
 # JWT / Auth
 python-jose[cryptography]>=3.3.0
 pydantic[email]==2.9.0
+
+# Add OpenRouter support
+openai>=1.0.0

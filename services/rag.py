@@ -1,12 +1,10 @@
 """
-RAG (Retrieval-Augmented Generation) service using LangChain + Google Gemini.
+RAG (Retrieval-Augmented Generation) service supporting multiple AI providers.
 """
 from typing import List, Optional
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import StrOutputParser
-from config import settings
 from services.embeddings import search_similar_documents
+from services.ai import ai_service
+from config import settings
 
 
 # System prompt for the AI
@@ -15,41 +13,18 @@ Your role is to provide accurate, helpful answers based on the retrieved knowled
 
 Rules:
 - Answer based ONLY on the provided context. If the context doesn't contain relevant information, say so.
-- Be concise but thorough. Use formatting (bullet points, numbered lists) when appropriate.
+- Be concise but thorough. Use markdown formatting for better readability:
+  * Use **bold** for emphasis on key terms
+  * Use bullet points (- ) for lists
+  * Use numbered lists (1. ) for steps or sequences
+  * Use ### for section headers if organizing content
+- DO NOT include source citations like [Source: ...] or [Document X] in your answers.
 - If you're unsure, acknowledge it rather than guessing.
-- Cite the source when possible (e.g., "According to the Academic Handbook...").
 - Respond in the same language as the user's question.
 """
 
-RAG_PROMPT_TEMPLATE = """{system_prompt}
 
-=== Retrieved Knowledge ===
-{context}
-
-=== User Question ===
-{question}
-
-Please provide a helpful answer based on the retrieved knowledge above. If the knowledge doesn't contain relevant information to answer the question, let the user know politely."""
-
-
-def get_chat_model() -> ChatGoogleGenerativeAI:
-    """
-    Get Google Gemini chat model instance.
-    """
-    if settings.google_api_key == "your_google_api_key_here":
-        raise ValueError(
-            "GOOGLE_API_KEY is not set. Please set it in backend/.env"
-        )
-
-    return ChatGoogleGenerativeAI(
-        model=settings.chat_model,
-        google_api_key=settings.google_api_key,
-        temperature=0.3,  # Lower temperature for more factual responses
-        max_output_tokens=2048,
-    )
-
-
-def generate_rag_response(
+async def generate_rag_response(
     question: str,
     conversation_history: Optional[List[dict]] = None,
     source_id: Optional[str] = None,
@@ -77,14 +52,15 @@ def generate_rag_response(
 
     for i, doc in enumerate(retrieved_docs, 1):
         context_parts.append(
-            f"[Document {i}] (Source: {doc['metadata'].get('title', 'Unknown')})\n{doc['content']}"
+            f"[Document {i}]\n{doc['content']}"
         )
         sources.append({
             "title": doc["metadata"].get("title", "Unknown"),
             "source_id": doc["metadata"].get("source_id"),
         })
 
-    context = "\n\n---\n\n".join(context_parts) if context_parts else "No relevant documents found."
+    context = "\n\n---\n\n".join(
+        context_parts) if context_parts else "No relevant documents found."
 
     # Step 3: Build conversation context
     conversation_context = ""
@@ -94,22 +70,29 @@ def generate_rag_response(
             role_label = "User" if msg["role"] == "user" else "Assistant"
             conversation_context += f"{role_label}: {msg['content']}\n"
 
-    # Step 4: Generate response using LLM
-    chat_model = get_chat_model()
-
-    prompt = ChatPromptTemplate.from_template(RAG_PROMPT_TEMPLATE)
-
-    chain = prompt | chat_model | StrOutputParser()
-
+    # Step 4: Build prompt
     full_question = question
     if conversation_context:
         full_question = f"Previous conversation:\n{conversation_context}\n\nCurrent question: {question}"
 
-    answer = chain.invoke({
-        "system_prompt": SYSTEM_PROMPT,
-        "context": context,
-        "question": full_question,
-    })
+    prompt = f"""Context information:
+{context}
+
+Question: {full_question}
+
+Please provide a helpful answer based on the context above."""
+
+    # Step 5: Generate response using AI service (OpenRouter or Gemini)
+    try:
+        answer = await ai_service.generate_response(  # ← Added await
+            prompt=prompt,
+            system_prompt=SYSTEM_PROMPT,
+            temperature=0.3,
+            max_tokens=2048
+        )
+    except Exception as e:
+        print(f"AI generation error: {e}")
+        answer = f"Sorry, I encountered an error: {str(e)}"
 
     return {
         "answer": answer,
@@ -118,10 +101,10 @@ def generate_rag_response(
     }
 
 
-def generate_simple_response(question: str) -> str:
+async def generate_simple_response(question: str) -> str:
     """
     Generate a response without RAG (fallback for when no knowledge base exists).
-    Uses Gemini directly.
+    Uses the configured AI provider directly.
 
     Args:
         question: User's question
@@ -129,15 +112,23 @@ def generate_simple_response(question: str) -> str:
     Returns:
         Generated response string
     """
-    chat_model = get_chat_model()
+    prompt = f"""Question: {question}
 
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", """You are a helpful AI assistant for a Knowledge Management System.
+Please provide a helpful answer. Be concise and friendly."""
+
+    simple_prompt = """You are a helpful AI assistant for a Knowledge Management System.
 Currently, the knowledge base is empty or not configured. Help the user understand the system
-and guide them to add knowledge sources through the admin panel."""),
-        ("human", "{question}"),
-    ])
+and guide them to add knowledge sources through the admin panel."""
 
-    chain = prompt | chat_model | StrOutputParser()
+    try:
+        answer = await ai_service.generate_response(  # ← Added await
+            prompt=prompt,
+            system_prompt=simple_prompt,
+            temperature=0.7,
+            max_tokens=500
+        )
+    except Exception as e:
+        print(f"Simple response error: {e}")
+        answer = f"Sorry, I encountered an error: {str(e)}"
 
-    return chain.invoke({"question": question})
+    return answer

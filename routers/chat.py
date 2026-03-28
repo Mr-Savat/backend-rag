@@ -117,7 +117,6 @@ async def delete_conversation(
 
     return {"message": "Conversation deleted"}
 
-
 @router.post("/chat", response_model=ChatMessageResponse)
 async def send_message(
     data: ChatMessageRequest,
@@ -125,13 +124,6 @@ async def send_message(
 ):
     """
     Send a message and get AI response using RAG.
-
-    Flow:
-    1. Save user message to database
-    2. Retrieve relevant knowledge using RAG
-    3. Generate AI response
-    4. Save AI response to database
-    5. Return AI response
     """
     supabase = get_supabase()
 
@@ -142,7 +134,7 @@ async def send_message(
         supabase.table("conversations").insert({
             "id": conv_id,
             "title": data.message[:50],
-            "user_id": user_id,  # ✅ Added user_id
+            "user_id": user_id,
         }).execute()
         conversation_id = conv_id
     else:
@@ -161,49 +153,43 @@ async def send_message(
                     "title": data.message[:50],
                 }).eq("id", conversation_id).execute()
 
-    # Save user message with user_id
+    # Save user message
     msg_id = str(uuid.uuid4())
     supabase.table("messages").insert({
         "id": msg_id,
         "conversation_id": conversation_id,
-        "user_id": user_id,  # ✅ Added user_id
+        "user_id": user_id,
         "role": "user",
         "content": data.message,
     }).execute()
 
-    # Fetch the saved user message
-    user_msg_result = supabase.table("messages").select('*').eq('id', msg_id).execute()
-    if not user_msg_result.data:
-        raise HTTPException(status_code=500, detail="Failed to save message")
-
-    # Get conversation history for context - only messages from this user's conversation
+    # Get conversation history for context
     history_result = supabase.table("messages").select("*").eq("conversation_id", conversation_id).order("created_at", desc=False).execute()
     conversation_history = [
         {"role": msg["role"], "content": msg["content"]}
         for msg in history_result.data[:-1]  # Exclude current message
     ]
 
-    # Generate RAG response
+    # Generate RAG response (now async)
     try:
-        rag_result = generate_rag_response(
+        rag_result = await generate_rag_response(  # ← Added await
             question=data.message,
             conversation_history=conversation_history,
         )
         ai_content = rag_result["answer"]
     except Exception as e:
-        # Fallback to simple response if RAG fails (e.g., no vector store configured)
         print(f"RAG failed, using fallback: {e}")
         try:
-            ai_content = generate_simple_response(data.message)
+            ai_content = await generate_simple_response(data.message)  # ← Added await
         except Exception as e2:
             ai_content = f"I'm currently unable to process your request. Error: {str(e2)}"
 
-    # Save AI response with user_id
+    # Save AI response
     ai_msg_id = str(uuid.uuid4())
     supabase.table("messages").insert({
         "id": ai_msg_id,
         "conversation_id": conversation_id,
-        "user_id": user_id,  # ✅ Added user_id
+        "user_id": user_id,
         "role": "assistant",
         "content": ai_content,
     }).execute()
