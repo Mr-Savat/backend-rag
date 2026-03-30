@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     database_url: str = ""
 
     # CORS - allow all origins for production deployment
-    cors_origins: str = "*"
+    cors_origins: str = "http://localhost:5173,https://frontend-rag-sooty.vercel.app"
     
     # LangChain settings
     chunk_size: int = 1000
