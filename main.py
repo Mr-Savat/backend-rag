@@ -23,21 +23,30 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-# CORS middleware - EXPLICIT CONFIGURATION
+# CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173", 
-        "http://localhost:3000", 
-        "http://127.0.0.1:5173",
-        "https://frontend-rag-sooty.vercel.app",
-        "https://frontend-rag-sooty.vercel.app", 
-    ],
+    allow_origins=settings.cors_origin_list,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization", "Accept"],
-    expose_headers=["Content-Type"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
+
+# CORS middleware - EXPLICIT CONFIGURATION
+# app.add_middleware(
+#     CORSMiddleware,
+#     allow_origins=[
+#         "http://localhost:5173", 
+#         "http://localhost:3000", 
+#         "http://127.0.0.1:5173",
+#         "https://frontend-rag-sooty.vercel.app",
+#         "https://frontend-rag-sooty.vercel.app", 
+#     ],
+#     allow_credentials=True,
+#     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+#     allow_headers=["Content-Type", "Authorization", "Accept"],
+#     expose_headers=["Content-Type"],
+# )
 
 # Include routers
 app.include_router(chat.router)
