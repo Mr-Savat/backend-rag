@@ -3,6 +3,8 @@ Chat router - handles RAG chat conversations.
 """
 import uuid 
 from fastapi import APIRouter, HTTPException, Depends
+from fastapi.responses import StreamingResponse
+import json
 from datetime import datetime
 from database import get_supabase
 from models.schemas import (
@@ -11,7 +13,9 @@ from models.schemas import (
     ConversationCreate,
     ConversationResponse,
 )
-from services.rag import generate_rag_response, generate_simple_response
+from services.rag import generate_rag_response, generate_simple_response, SYSTEM_PROMPT
+from services.embeddings import search_similar_documents
+from services.ai import ai_service
 from dependencies.auth import get_current_user_id
 
 router = APIRouter(prefix="/api", tags=["chat"])
@@ -26,14 +30,12 @@ async def create_conversation(
     supabase = get_supabase()
     conv_id = str(uuid.uuid4())
 
-    # Insert the record with user_id
     supabase.table("conversations").insert({
         "id": conv_id,
         "title": data.title,
-        "user_id": user_id,  # ✅ Added user_id
+        "user_id": user_id,
     }).execute()
 
-    # Fetch the created record
     result = supabase.table("conversations").select('*').eq('id', conv_id).execute()
     
     if not result.data:
@@ -50,14 +52,14 @@ async def create_conversation(
         message_count=0,
     )
 
+
 @router.get("/conversations")
 async def list_conversations(
-    user_id: str = Depends(get_current_user_id)  # Add this
+    user_id: str = Depends(get_current_user_id)
 ):
     """List all conversations for current user"""
     supabase = get_supabase()
 
-    # Filter by user_id
     query = supabase.table("conversations").select("*, messages(count)").eq("user_id", user_id).order("updated_at", desc=True)
 
     result = query.execute()
@@ -76,6 +78,7 @@ async def list_conversations(
 
     return {"conversations": conversations, "total": len(conversations)}
 
+
 @router.get("/conversations/{conversation_id}")
 async def get_conversation(
     conversation_id: str,
@@ -84,13 +87,11 @@ async def get_conversation(
     """Get a conversation with all messages (must belong to current user)."""
     supabase = get_supabase()
 
-    # Get conversation - verify ownership
     conv_result = supabase.table("conversations").select("*").eq("id", conversation_id).eq("user_id", user_id).execute()
     if not conv_result.data:
         raise HTTPException(status_code=404, detail="Conversation not found")
     conv_data = conv_result.data[0]
 
-    # Get messages
     msg_result = supabase.table("messages").select("*").eq("conversation_id", conversation_id).order("created_at", desc=False).execute()
 
     return {
@@ -107,27 +108,23 @@ async def delete_conversation(
     """Delete a conversation and its messages (must belong to current user)."""
     supabase = get_supabase()
 
-    # Verify ownership before deletion
     check_result = supabase.table("conversations").select("id").eq("id", conversation_id).eq("user_id", user_id).execute()
     if not check_result.data:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    # Delete conversation (messages are deleted automatically via ON DELETE CASCADE)
-    result = supabase.table("conversations").delete().eq("id", conversation_id).execute()
+    supabase.table("conversations").delete().eq("id", conversation_id).execute()
 
     return {"message": "Conversation deleted"}
+
 
 @router.post("/chat", response_model=ChatMessageResponse)
 async def send_message(
     data: ChatMessageRequest,
     user_id: str = Depends(get_current_user_id)
 ):
-    """
-    Send a message and get AI response using RAG.
-    """
+    """Send a message and get AI response using RAG."""
     supabase = get_supabase()
 
-    # Create conversation if not provided
     conversation_id = data.conversation_id
     if not conversation_id:
         conv_id = str(uuid.uuid4())
@@ -138,12 +135,10 @@ async def send_message(
         }).execute()
         conversation_id = conv_id
     else:
-        # Verify conversation belongs to user
         conv_check = supabase.table("conversations").select("id").eq("id", conversation_id).eq("user_id", user_id).execute()
         if not conv_check.data:
             raise HTTPException(status_code=404, detail="Conversation not found")
         
-        # Update conversation title if it's the first message
         conv_result = supabase.table("conversations").select("*, messages(count)").eq("id", conversation_id).execute()
         if conv_result.data:
             conv_data = conv_result.data[0]
@@ -163,16 +158,14 @@ async def send_message(
         "content": data.message,
     }).execute()
 
-    # Get conversation history for context
     history_result = supabase.table("messages").select("*").eq("conversation_id", conversation_id).order("created_at", desc=False).execute()
     conversation_history = [
         {"role": msg["role"], "content": msg["content"]}
-        for msg in history_result.data[:-1]  # Exclude current message
+        for msg in history_result.data[:-1]
     ]
 
-    # Generate RAG response (now async)
     try:
-        rag_result = await generate_rag_response(  # ← Added await
+        rag_result = await generate_rag_response(
             question=data.message,
             conversation_history=conversation_history,
         )
@@ -180,7 +173,7 @@ async def send_message(
     except Exception as e:
         print(f"RAG failed, using fallback: {e}")
         try:
-            ai_content = await generate_simple_response(data.message)  # ← Added await
+            ai_content = await generate_simple_response(data.message)
         except Exception as e2:
             ai_content = f"I'm currently unable to process your request. Error: {str(e2)}"
 
@@ -194,7 +187,6 @@ async def send_message(
         "content": ai_content,
     }).execute()
 
-    # Fetch the saved AI response
     ai_msg_result = supabase.table("messages").select('*').eq('id', ai_msg_id).execute()
     if not ai_msg_result.data:
         raise HTTPException(status_code=500, detail="Failed to save AI response")
@@ -208,3 +200,94 @@ async def send_message(
         content=ai_content,
         created_at=ai_msg_data["created_at"],
     )
+
+
+# ============ STREAMING ENDPOINT ============
+
+@router.post("/chat/stream")
+async def send_message_stream(
+    data: ChatMessageRequest,
+    user_id: str = Depends(get_current_user_id)
+):
+    """Send a message and get streaming AI response (word by word)."""
+    supabase = get_supabase()
+    
+    # Create conversation if not provided
+    conversation_id = data.conversation_id
+    if not conversation_id:
+        conv_id = str(uuid.uuid4())
+        supabase.table("conversations").insert({
+            "id": conv_id,
+            "title": data.message[:50],
+            "user_id": user_id,
+        }).execute()
+        conversation_id = conv_id
+    else:
+        # Verify conversation belongs to user
+        conv_check = supabase.table("conversations").select("id").eq("id", conversation_id).eq("user_id", user_id).execute()
+        if not conv_check.data:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    # Save user message
+    msg_id = str(uuid.uuid4())
+    supabase.table("messages").insert({
+        "id": msg_id,
+        "conversation_id": conversation_id,
+        "user_id": user_id,
+        "role": "user",
+        "content": data.message,
+    }).execute()
+    
+    # Get conversation history
+    history_result = supabase.table("messages").select("*").eq("conversation_id", conversation_id).order("created_at", desc=False).execute()
+    conversation_history = [
+        {"role": msg["role"], "content": msg["content"]}
+        for msg in history_result.data[:-1]
+    ]
+    
+    # Retrieve relevant documents for RAG
+    retrieved_docs = search_similar_documents(query=data.message)
+    context = "\n\n".join([doc["content"] for doc in retrieved_docs]) if retrieved_docs else "No relevant documents found."
+    
+    # Build conversation context
+    conversation_context = ""
+    if conversation_history:
+        for msg in conversation_history[-6:]:
+            role_label = "User" if msg["role"] == "user" else "Assistant"
+            conversation_context += f"{role_label}: {msg['content']}\n"
+    
+    full_question = data.message
+    if conversation_context:
+        full_question = f"Previous conversation:\n{conversation_context}\n\nCurrent question: {data.message}"
+    
+    prompt = f"""Context information:
+{context}
+
+Question: {full_question}
+
+Please provide a helpful answer based on the context above."""
+    
+    async def generate():
+        full_response = ""
+        async for chunk in ai_service.generate_stream_response(
+            prompt=prompt,
+            system_prompt=SYSTEM_PROMPT,
+            temperature=0.3,
+            max_tokens=2048
+        ):
+            full_response += chunk
+            yield f"data: {json.dumps({'content': chunk})}\n\n"
+        
+        # Save final response to database
+        ai_msg_id = str(uuid.uuid4())
+        supabase.table("messages").insert({
+            "id": ai_msg_id,
+            "conversation_id": conversation_id,
+            "user_id": user_id,
+            "role": "assistant",
+            "content": full_response,
+        }).execute()
+        
+        yield "data: [DONE]\n\n"
+    
+    return StreamingResponse(generate(), media_type="text/event-stream")

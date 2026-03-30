@@ -128,6 +128,83 @@ class AIService:
         except Exception as e:
             print(f"❌ Gemini API error: {e}")
             return f"Error: {str(e)}"
+    
+    async def _generate_openrouter_stream(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 1000
+    ):
+        """Generate streaming response using OpenRouter (yields chunks)"""
+
+        if not settings.openrouter_api_key:
+            yield "Error: OpenRouter API key is not configured."
+            return
+
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        try:
+            print(
+                f"📡 Calling OpenRouter Streaming API with model: {settings.openrouter_model}")
+
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                async with client.stream(
+                    "POST",
+                    f"{settings.openrouter_base_url}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {settings.openrouter_api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": settings.openrouter_model,
+                        "messages": messages,
+                        "temperature": temperature,
+                        "max_tokens": max_tokens,
+                        "stream": True,
+                    }
+                ) as response:
+                    async for line in response.aiter_lines():
+                        if line.startswith("data: "):
+                            data = line[6:]
+                            if data == "[DONE]":
+                                break
+                            try:
+                                import json
+                                chunk = json.loads(data)
+                                delta = chunk.get("choices", [{}])[
+                                    0].get("delta", {})
+                                content = delta.get("content", "")
+                                if content:
+                                    yield content
+                            except:
+                                pass
+
+        except Exception as e:
+            print(f"❌ OpenRouter streaming error: {e}")
+            yield f"Error: {str(e)}"
+
+
+    async def generate_stream_response(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 1000
+    ):
+        """Generate streaming response"""
+
+        if self.provider == "openrouter":
+            async for chunk in self._generate_openrouter_stream(prompt, system_prompt, temperature, max_tokens):
+                yield chunk
+        elif self.provider == "gemini":
+            # Gemini streaming would go here
+            yield "Streaming not supported for Gemini yet"
+        else:
+            yield f"Unknown AI provider: {self.provider}"
 
 # Global instance
 ai_service = AIService()
