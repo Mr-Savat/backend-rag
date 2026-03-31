@@ -23,23 +23,23 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-# CORS middleware
-# app.add_middleware(
-#     CORSMiddleware,
-#     allow_origins=settings.cors_origin_list,
-#     allow_credentials=True,
-#     allow_methods=["*"],
-#     allow_headers=["*"],
-# )
-
-
+# CORS middleware remote
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all during testing
-    allow_credentials=False,  # Must be False when allow_origins=["*"]
+    allow_origins=settings.cors_origin_list,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# local
+# app.add_middleware(
+#     CORSMiddleware,
+#     allow_origins=["*"],  # Allow all during testing
+#     allow_credentials=False,  # Must be False when allow_origins=["*"]
+#     allow_methods=["*"],
+#     allow_headers=["*"],
+# )
 
 # CORS middleware - EXPLICIT CONFIGURATION
 # app.add_middleware(
