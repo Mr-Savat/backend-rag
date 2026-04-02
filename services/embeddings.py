@@ -72,7 +72,7 @@ def get_vector_store(collection_name: str = "knowledge") -> PGVector:
     return vector_store
 
 
-def add_documents_to_vector_store(
+async def add_documents_to_vector_store(
     documents: List[dict],
     source_id: str,
     collection_name: str = "knowledge",
@@ -105,8 +105,9 @@ def add_documents_to_vector_store(
             )
         )
 
-    # Add to vector store
-    ids = vector_store.add_documents(langchain_docs)
+    # Add to vector store in a non-blocking thread to keep FastAPI fast
+    import asyncio
+    ids = await asyncio.to_thread(vector_store.add_documents, langchain_docs)
 
     return len(ids)
 

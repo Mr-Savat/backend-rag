@@ -217,7 +217,7 @@ async def delete_knowledge_source(
 
 # --- Background Processing Functions ---
 
-def process_uploaded_file(source_id: str, user_id: str, file_content: bytes, file_extension: str):
+async def process_uploaded_file(source_id: str, user_id: str, file_content: bytes, file_extension: str):
     """Process an uploaded file: extract text → chunk → embed → store."""
     supabase = get_supabase()
 
@@ -242,7 +242,7 @@ def process_uploaded_file(source_id: str, user_id: str, file_content: bytes, fil
                 "source_id": source_id,
             },
         } for chunk in chunks]
-        chunks_added = add_documents_to_vector_store(documents, source_id)
+        chunks_added = await add_documents_to_vector_store(documents, source_id)
 
         # Update source status
         supabase.table("knowledge_sources").update({
@@ -259,7 +259,7 @@ def process_uploaded_file(source_id: str, user_id: str, file_content: bytes, fil
         }).eq("id", source_id).execute()
 
 
-def process_text_content(source_id: str, user_id: str, content: str, source_type: str):
+async def process_text_content(source_id: str, user_id: str, content: str, source_type: str):
     """Process text/FAQ content: chunk → embed → store."""
     supabase = get_supabase()
 
@@ -291,7 +291,7 @@ def process_text_content(source_id: str, user_id: str, content: str, source_type
             } for chunk in chunks]
 
         # Store in vector database
-        chunks_added = add_documents_to_vector_store(documents, source_id)
+        chunks_added = await add_documents_to_vector_store(documents, source_id)
 
         # Update source status
         supabase.table("knowledge_sources").update({

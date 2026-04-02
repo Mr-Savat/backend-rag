@@ -161,7 +161,7 @@ async def process_url_source(source_id: str, user_id: str, url: str):
             },
         } for chunk in chunks]
 
-        chunks_added = add_documents_to_vector_store(documents, source_id)
+        chunks_added = await add_documents_to_vector_store(documents, source_id)
 
         # Update source status
         from datetime import datetime, timezone

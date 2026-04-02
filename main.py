@@ -24,32 +24,32 @@ app = FastAPI(
 )
 
 # CORS middleware remote
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origin_list,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# local
 # app.add_middleware(
 #     CORSMiddleware,
-#     allow_origins=["*"],  # Allow all during testing
-#     allow_credentials=False,  # Must be False when allow_origins=["*"]
+#     allow_origins=settings.cors_origin_list,
+#     allow_credentials=True,
 #     allow_methods=["*"],
 #     allow_headers=["*"],
 # )
+
+# local
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all during testing
+    allow_credentials=False,  # Must be False when allow_origins=["*"]
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # CORS middleware - EXPLICIT CONFIGURATION
 # app.add_middleware(
 #     CORSMiddleware,
 #     allow_origins=[
-#         "http://localhost:5173", 
-#         "http://localhost:3000", 
+#         "http://localhost:5173",
+#         "http://localhost:3000",
 #         "http://127.0.0.1:5173",
 #         "https://frontend-rag-sooty.vercel.app",
-#         "https://frontend-rag-sooty.vercel.app", 
+#         "https://frontend-rag-sooty.vercel.app",
 #     ],
 #     allow_credentials=True,
 #     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -117,6 +117,7 @@ async def api_info():
             },
         },
     }
+
 
 @app.get("/debug/auth")
 async def debug_auth(token: str):

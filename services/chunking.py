@@ -103,23 +103,27 @@ def get_chunk_size(text: str, doc_type: str) -> int:
 
 
 def split_by_headers(text: str) -> List[str]:
-    """Split markdown/text by headers (H1, H2, H3)"""
-    sections = []
-    current_section = []
-    lines = text.split('\n')
+    """Split markdown by headers (H1, H2, H3) using LangChain."""
+    try:
+        headers_to_split_on = [
+            ("#", "Header 1"),
+            ("##", "Header 2"),
+            ("###", "Header 3"),
+        ]
+        markdown_splitter = MarkdownHeaderTextSplitter(headers_to_split_on=headers_to_split_on)
+        md_splits = markdown_splitter.split_text(text)
+        
+        sections = []
+        for doc in md_splits:
+            # Prepend the header hierarchy to the content so RAG knows what section it is in
+            header_context = " > ".join(doc.metadata.values())
+            content = f"Section: {header_context}\n\n{doc.page_content}" if header_context else doc.page_content
+            sections.append(content)
+            
+        return sections if sections else [text]
+    except Exception:
+        return [text]
 
-    for line in lines:
-        # Check if line is a header
-        if re.match(r'^#{1,3}\s', line) or re.match(r'^[A-Z][A-Z\s]+$', line.strip()):
-            if current_section:
-                sections.append('\n'.join(current_section))
-                current_section = []
-        current_section.append(line)
-
-    if current_section:
-        sections.append('\n'.join(current_section))
-
-    return sections if len(sections) > 1 else [text]
 
 
 def split_by_semantic_similarity(chunks: List[str]) -> List[str]:
