@@ -13,7 +13,7 @@ from models.schemas import (
     ConversationCreate,
     ConversationResponse,
 )
-from services.rag import generate_rag_response, generate_simple_response, SYSTEM_PROMPT
+from services.rag import generate_rag_response, generate_simple_response, get_system_prompt, get_rag_context
 from services.embeddings import search_similar_documents
 from services.ai import ai_service
 from dependencies.auth import get_current_user_id
@@ -245,9 +245,8 @@ async def send_message_stream(
         for msg in history_result.data[:-1]
     ]
     
-    # Retrieve relevant documents for RAG
-    retrieved_docs = search_similar_documents(query=data.message)
-    context = "\n\n".join([doc["content"] for doc in retrieved_docs]) if retrieved_docs else "No relevant documents found."
+    # Retrieve relevant documents for RAG using shared isolated context pipeline
+    context, sources = await get_rag_context(data.message)
     
     # Build conversation context
     conversation_context = ""
@@ -271,7 +270,7 @@ Please provide a helpful answer based on the context above."""
         full_response = ""
         async for chunk in ai_service.generate_stream_response(
             prompt=prompt,
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=get_system_prompt(),
             temperature=0.3,
             max_tokens=2048
         ):

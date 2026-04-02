@@ -7,9 +7,20 @@ from services.ai import ai_service
 from config import settings
 
 
-# System prompt for the AI
-SYSTEM_PROMPT = """You are an AI Knowledge Assistant for a Conversational AI Knowledge System. 
-Your role is to provide accurate, helpful answers based strictly on the retrieved knowledge base content.
+from datetime import datetime
+
+def get_system_prompt() -> str:
+    current_time = datetime.now().strftime("%A, %B %d, %Y")
+    
+    return f"""You are an AI Knowledge Assistant for a Conversational AI Knowledge System. 
+Your primary role is to provide accurate, helpful answers using the retrieved knowledge base content.
+
+CURRENT SYSTEM TIME: {current_time}
+
+CONVERSATIONAL & CHIT-CHAT RULES (IMPORTANT):
+- If the user asks a casual conversational question (e.g., "hello", "how are you", "what day is it", "it's ok", "thank you"), OR if their question is completely unrelated to the retrieved context, you MUST ignore the context silently.
+- Do NOT say "The provided context does not contain...". Just answer their question normally, warmly, and naturally using your general knowledge.
+- Be friendly, concise, and conversational when responding to chit-chat.
 
 CONTEXT ISOLATION & SYNTHESIS:
 - You will be provided with chunks from various documents. 
@@ -24,12 +35,11 @@ FORMATTING RULES:
 - Keep sentences concise and easy to read.
 
 GENERAL RULES:
-- Answer based ONLY on the provided context. If the context doesn't contain relevant information, say so.
+- For knowledge-based questions, prioritize the provided context.
 - DO NOT include internal system citations like [Document X | Source: ...] in your final answers.
-- If you're unsure, acknowledge it rather than guessing.
+- If you're unsure about a specific fact from the database, acknowledge it rather than guessing.
 - Respond in the same language as the user's question.
 """
-
 
 async def reformulate_query(question: str, conversation_history: Optional[List[dict]] = None) -> str:
     """Rewrite query based on chat history using extremely fast LLM inference."""
@@ -72,21 +82,11 @@ def get_ranker():
             return None
     return _ranker
 
-async def generate_rag_response(
-    question: str,
-    conversation_history: Optional[List[dict]] = None,
-    source_id: Optional[str] = None,
-) -> dict:
-    """
-    Generate a response using High-Performance RAG.
-    """
-    # Step 0: Contextualize the query
-    standalone_query = await reformulate_query(question, conversation_history)
-    print(f"Original: {question} | Standalone: {standalone_query}")
-
+async def get_rag_context(query: str, source_id: Optional[str] = None) -> tuple[str, list]:
+    """Retrieve, rerank, and format documents for RAG context, applying strict Context Isolation boundaries."""
     # Step 1: Retrieve a LARGER pool of candidate documents (e.g., top 15)
     retrieved_docs = search_similar_documents(
-        query=standalone_query,
+        query=query,
         k=15, 
         source_id=source_id,
     )
@@ -106,7 +106,7 @@ async def generate_rag_response(
                     "meta": doc["metadata"]
                 })
                 
-            rerank_request = RerankRequest(query=standalone_query, passages=passages)
+            rerank_request = RerankRequest(query=query, passages=passages)
             results = ranker.rerank(rerank_request)
             
             # Select ultimate Top 5
@@ -137,6 +137,23 @@ async def generate_rag_response(
 
     context = "\n\n---\n\n".join(
         context_parts) if context_parts else "No relevant documents found."
+        
+    return context, sources
+
+async def generate_rag_response(
+    question: str,
+    conversation_history: Optional[List[dict]] = None,
+    source_id: Optional[str] = None,
+) -> dict:
+    """
+    Generate a response using High-Performance RAG.
+    """
+    # Step 0: Contextualize the query
+    standalone_query = await reformulate_query(question, conversation_history)
+    print(f"Original: {question} | Standalone: {standalone_query}")
+
+    # Step 1-3: Retrieve, Rerank, and Format Documents
+    context, sources = await get_rag_context(standalone_query, source_id)
 
     # Step 4: Build conversation context for LLM response
     conversation_context = ""
@@ -162,7 +179,7 @@ Please provide a helpful answer based on the context above."""
     try:
         answer = await ai_service.generate_response(  
             prompt=prompt,
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=get_system_prompt(),
             temperature=0.3,
             max_tokens=2048
         )
@@ -173,7 +190,7 @@ Please provide a helpful answer based on the context above."""
     return {
         "answer": answer,
         "sources": sources,
-        "chunks_retrieved": len(final_docs),
+        "sources": sources,
     }
 
 
