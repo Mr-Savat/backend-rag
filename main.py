@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from config import settings
 
 # Import routers
-from routers import chat, knowledge, sources
+from routers import chat, knowledge, sources, analytics
 
 # Import schemas
 from models.schemas import HealthResponse
@@ -61,6 +61,7 @@ app.add_middleware(
 app.include_router(chat.router)
 app.include_router(knowledge.router)
 app.include_router(sources.router)
+app.include_router(analytics.router)
 
 
 # --- Health Check ---
